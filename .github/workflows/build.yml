@@ -15,7 +15,8 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
+      - name: Accept Android licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
 
       - uses: gradle/actions/setup-gradle@v4
         with:
@@ -236,3 +237,86 @@ jobs:
             <input id="newAmt" type="number" inputmode="decimal" placeholder="مبلغ العميل الجديد">
             <button id="addBtn">+ إضافة عميل</button>
           </div>
+
+          <div class="wrap">
+          <table>
+            <thead><tr>
+              <th class="h-id">العميل</th><th class="h-amt">المبلغ</th><th class="h-pct">النسبة</th>
+              <th class="h-gain">المكسب</th><th class="h-exp">المصروف</th><th class="h-net">الصافي</th><th class="h-del">حذف</th>
+            </tr></thead>
+            <tbody id="body"></tbody>
+            <tfoot id="foot"></tfoot>
+          </table>
+          </div>
+
+          <script>
+          const KEY="contrib_app_v1";
+          let state;
+          try{state=JSON.parse(localStorage.getItem(KEY))}catch(e){}
+          if(!state||!Array.isArray(state.clients)){
+            state={profit:48000,expense:3000,clients:[
+              ["A",50000],["B",60000],["C",50000],["D",10000],["E",80000],["F",60000],
+              ["G",50000],["H",40000],["I",70000],["J",40000],["K",15000],["L",75000]
+            ].map(([id,amount])=>({id,amount}))};
+          }
+          function save(){try{localStorage.setItem(KEY,JSON.stringify(state))}catch(e){}}
+          const fmt=n=>(Math.round(n*100)/100).toLocaleString("en",{maximumFractionDigits:2});
+          const toName=n=>n<26?String.fromCharCode(65+n):toName(Math.floor(n/26)-1)+String.fromCharCode(65+n%26);
+          function nextId(){const used=new Set(state.clients.map(c=>c.id));for(let i=0;;i++){const s=toName(i);if(!used.has(s))return s}}
+
+          function render(){
+            const total=state.clients.reduce((s,c)=>s+c.amount,0);
+            const P=+state.profit||0,E=+state.expense||0;
+            let sg=0,se=0,sn=0,sp=0;
+            const body=document.getElementById("body");
+            body.innerHTML="";
+            if(!state.clients.length){body.innerHTML='<tr><td colspan="7" class="empty">لا يوجد عملاء</td></tr>'}
+            state.clients.forEach((c,i)=>{
+              const pct=total?c.amount/total:0,g=P*pct,e=E*pct,n=g-e;
+              sg+=g;se+=e;sn+=n;sp+=pct;
+              const tr=document.createElement("tr");
+              tr.innerHTML=`<td class="id">${c.id}</td>
+                <td class="amt"><input type="number" inputmode="decimal" value="${c.amount}"></td>
+                <td class="pct">${fmt(pct*100)}%</td><td class="gain">${fmt(g)}</td>
+                <td class="exp">${fmt(e)}</td><td class="net">${fmt(n)}</td>
+                <td class="del"><button>حذف</button></td>`;
+              tr.querySelector("input").addEventListener("change",ev=>{
+                state.clients[i].amount=Math.max(0,+ev.target.value||0);save();render();
+              });
+              tr.querySelector("button").addEventListener("click",()=>{
+                if(confirm("حذف العميل "+c.id+"؟")){state.clients.splice(i,1);save();render()}
+              });
+              body.appendChild(tr);
+            });
+            document.getElementById("foot").innerHTML=state.clients.length?
+              `<tr><td>الإجمالي</td><td>${fmt(total)}</td><td>${fmt(sp*100)}%</td><td>${fmt(sg)}</td><td>${fmt(se)}</td><td>${fmt(sn)}</td><td></td></tr>`:"";
+            document.getElementById("tAmount").textContent=fmt(total);
+            document.getElementById("tNet").textContent=fmt(P-E);
+          }
+
+          const pIn=document.getElementById("profit"),eIn=document.getElementById("expense");
+          pIn.value=state.profit;eIn.value=state.expense;
+          pIn.addEventListener("input",()=>{state.profit=+pIn.value||0;save();render()});
+          eIn.addEventListener("input",()=>{state.expense=+eIn.value||0;save();render()});
+
+          document.getElementById("addBtn").addEventListener("click",()=>{
+            const inp=document.getElementById("newAmt"),v=+inp.value;
+            if(!(v>0)){inp.focus();return}
+            state.clients.push({id:nextId(),amount:v});
+            inp.value="";save();render();
+          });
+          render();
+          </script>
+          </body>
+          </html>
+          __EOF__
+
+      - name: Build APK
+        working-directory: project
+        run: gradle assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: contrib-app-apk
+          path: project/app/build/outputs/apk/debug/app-debug.apk
